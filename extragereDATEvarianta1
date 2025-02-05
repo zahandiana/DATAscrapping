@@ -1,0 +1,202 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using OpenQA.Selenium;
+using OpenQA.Selenium.Chrome;
+using OpenQA.Selenium.Support.UI;
+using ClosedXML.Excel;
+using SeleniumExtras.WaitHelpers;
+
+class Scraper
+{
+    static void Main()
+    {
+        // Configurare ChromeOptions 
+
+        ChromeOptions options = new ChromeOptions();
+        options.AddArgument("--disable-dev-shm-usage");
+        options.AddArgument("--no-sandbox");
+        options.AddArgument("--remote-debugging-port=9222");
+
+        // Inițializare WebDriver și setare URL-ul principal
+
+        IWebDriver driver = new ChromeDriver(options);
+        string baseUrl = "https://www.thenx.net/catalog";
+
+        // Extragerea link-urile categoriilor
+
+        List<string> categoryLinks = GetCategoryLinks(driver, baseUrl);
+        List<string> allProducts = new List<string>();
+
+        // Parcurgere categorie și extragere produsele
+
+        foreach (string categoryUrl in categoryLinks)
+        {
+            Console.WriteLine($"Procesăm categoria: {categoryUrl}");
+
+            try
+            {
+                driver.Navigate().GoToUrl(categoryUrl);
+                System.Threading.Thread.Sleep(5000);
+
+                List<string> categoryProducts = ExtractProductsFromCategory(driver);
+                allProducts.AddRange(categoryProducts);
+            }
+            catch (WebDriverException)
+            {
+                Console.WriteLine("Browserul s-a închis neașteptat. Reîncercare...");
+                driver = new ChromeDriver(options);
+                driver.Navigate().GoToUrl(categoryUrl);
+                System.Threading.Thread.Sleep(5000);
+            }
+        }
+
+        Console.WriteLine($"Nr. total produse extrase de pe site: {allProducts.Count}");
+        SaveToExcel(allProducts);
+        driver.Quit();
+    }
+
+   
+    static List<string> GetCategoryLinks(IWebDriver driver, string baseUrl)
+    {
+        driver.Navigate().GoToUrl(baseUrl);
+        System.Threading.Thread.Sleep(3000);
+
+        List<string> categoryLinks = new List<string>();
+        var categoryElements = driver.FindElements(By.XPath("//a[contains(@href, '/catalog/')]"));
+
+        // Adăugare categorie la listă
+
+        foreach (var element in categoryElements)
+        {
+            string categoryUrl = element.GetAttribute("href");
+            if (!categoryLinks.Contains(categoryUrl) && categoryUrl.StartsWith(baseUrl))
+            {
+                categoryLinks.Add(categoryUrl);
+                Console.WriteLine($"Categorie detectată: {categoryUrl}");
+            }
+        }
+        return categoryLinks;
+    }
+
+    static List<string> ExtractProductsFromCategory(IWebDriver driver)
+    {
+        List<string> productNames = new List<string>();
+        WebDriverWait wait = new WebDriverWait(driver, TimeSpan.FromSeconds(5));
+
+        bool hasNextPage = true;
+        while (hasNextPage)
+        {
+            Console.WriteLine("Procesăm pagina...");
+
+            ScrollToBottom(driver);
+
+            try
+            {
+                var productElements = driver.FindElements(By.XPath("//a[contains(@class, 'product__name')]"));
+                Console.WriteLine($"Nr. produse detectate pe pagină: {productElements.Count}");
+
+                // Parcurgem lista de produse și le adăugăm în listă
+
+                foreach (var product in productElements)
+                {
+                    string name = product.Text.Trim();
+                    if (string.IsNullOrEmpty(name))
+                    {
+                        name = product.GetAttribute("innerText")?.Trim();
+                    }
+                    if (!string.IsNullOrEmpty(name) && !productNames.Contains(name))
+                    {
+                        productNames.Add(name);
+                    }
+                }
+            }
+            catch (WebDriverException)
+            {
+                Console.WriteLine("Eroare la extragerea produselor. Reîncercare...");
+                driver.Navigate().Refresh();
+                System.Threading.Thread.Sleep(5000);
+            }
+
+            // Verificăm dacă există o pagină următoare ]
+
+            try
+            {
+                var nextPageButton = driver.FindElement(By.XPath("//a[@title='Pagina urmatoare']"));
+                Console.WriteLine($"Butonul Next detectat: {nextPageButton.GetAttribute("href")}");
+
+                if (!nextPageButton.Displayed || !nextPageButton.Enabled)
+                {
+                    Console.WriteLine("Butonul Next nu este vizibil.");
+                    break;
+                }
+
+                IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
+                js.ExecuteScript("arguments[0].scrollIntoView({block: 'center'});", nextPageButton);
+                System.Threading.Thread.Sleep(1000);
+
+                try
+                {
+                    nextPageButton.Click();
+                }
+                catch (ElementClickInterceptedException)
+                {
+                    js.ExecuteScript("arguments[0].click();", nextPageButton);
+                }
+
+                System.Threading.Thread.Sleep(3000);
+                wait.Until(d => d.FindElements(By.XPath("//a[contains(@class, 'product__name')]")).Count > 0);
+            }
+            catch (NoSuchElementException)
+            {
+                Console.WriteLine("Nu s-a găsit butonul Next.");
+                hasNextPage = false;
+            }
+        }
+
+        return productNames;
+    }
+
+    static void ScrollToBottom(IWebDriver driver)
+    {
+        IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
+        long lastHeight = (long)js.ExecuteScript("return document.body.scrollHeight");
+
+        while (true)
+        {
+            js.ExecuteScript("window.scrollTo(0, document.body.scrollHeight)");
+            System.Threading.Thread.Sleep(2000);
+
+            long newHeight = (long)js.ExecuteScript("return document.body.scrollHeight");
+            if (newHeight == lastHeight)
+                break;
+            lastHeight = newHeight;
+        }
+    }
+
+    static void SaveToExcel(List<string> productNames)
+    {
+        string filePath = "Produse_Site_Complet.xlsx";
+
+        if (File.Exists(filePath))
+        {
+            File.Delete(filePath);
+            Console.WriteLine($"Fișierul {filePath} a fost șters.");
+        }
+
+        using (var workbook = new XLWorkbook())
+        {
+            var worksheet = workbook.Worksheets.Add("Produse");
+            worksheet.Cell(1, 1).Value = "Nume Produs";
+
+            // Scriem fiecare produs în fișierul Excel
+            for (int i = 0; i < productNames.Count; i++)
+            {
+                worksheet.Cell(i + 2, 1).Value = productNames[i];
+            }
+
+            workbook.SaveAs(filePath);
+        }
+        Console.WriteLine($"Datele au fost salvate în {filePath}");
+    }
+}
