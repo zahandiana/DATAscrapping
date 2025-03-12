@@ -46,7 +46,3 @@ Acest proiect este o aplicație de **data scraping** dezvoltată în **C#**, car
 - Adăugarea unui UI pentru interacțiune mai ușoară.
 - Integrarea cu baze de date SQL sau NoSQL pentru stocare avansată.
 - Suport pentru multiple surse de scraping.
-
-## 📢 Concluzie
-Acest proiect demonstrează utilizarea tehnicilor de **data scraping** în **C#**, folosind Selenium pentru navigare automată și ClosedXML pentru gestionarea datelor. Poate fi extins și adaptat pentru diverse scenarii de procesare a informațiilor.
-
